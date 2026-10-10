@@ -1,0 +1,16 @@
+{
+  "name": "bitmoji-mixamo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "devDependencies": {
+    "playcanvas": "^2.22.4",
+    "three": "^0.186.1"
+  },
+  "description": "Mixamo animations on the player's 3D Bitmoji in a Snapchat Web Lens (PlayCanvas).",
+  "scripts": {
+    "convert": "node cli.mjs",
+    "make-samples": "node scripts/make-samples.mjs"
+  }
+}

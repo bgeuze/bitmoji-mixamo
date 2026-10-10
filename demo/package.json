@@ -1,0 +1,18 @@
+{
+  "name": "bitmoji-mixamo-demo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "zip": "vite build && rm -f demo.zip && cd dist && zip -r -X ../demo.zip . -x '*.DS_Store'"
+  },
+  "dependencies": {
+    "@snap/web-lens-api": "0.1.0",
+    "playcanvas": "^2.22.4"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10"
+  }
+}

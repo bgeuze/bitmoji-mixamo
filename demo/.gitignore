@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.zip
+public/avatar_default.glb
+public/animations.glb

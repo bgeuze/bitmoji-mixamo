@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bitmoji Mixamo Converter</title>
+<meta name="description" content="Drop Mixamo FBX animations, get one .glb your Snapchat Web Lens plays on the player's 3D Bitmoji.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: a work bench. Clips on the left, a dark capture stage on the right, the code you paste below. */
+  :root {
+    --bg: #eef0f4;
+    --panel: #ffffff;
+    --fg: #14161c;
+    --muted: #5d6474;
+    --line: #d7dbe4;
+    --accent: #3d4cf5;
+    --accent-ink: #ffffff;
+    --ok: #13805a;
+    --warn: #a35c00;
+    --stage: #12141a;
+    --stage-fg: #c9cede;
+    --display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+    --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1116; --panel: #181b22; --fg: #e8eaf0; --muted: #9aa1b2; --line: #2a2f3a;
+      --accent: #7f8bff; --accent-ink: #0f1116; --ok: #3ccf96; --warn: #f0a640; --stage: #07080b; --stage-fg: #c9cede;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1116; --panel: #181b22; --fg: #e8eaf0; --muted: #9aa1b2; --line: #2a2f3a;
+    --accent: #7f8bff; --accent-ink: #0f1116; --ok: #3ccf96; --warn: #f0a640; --stage: #07080b; --stage-fg: #c9cede;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--fg); font: 15px/1.55 var(--body); padding: 0 16px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding-block: 32px 48px; display: grid; gap: 24px; }
+  header { display: grid; gap: 10px; }
+  h1 { font: 800 clamp(28px, 5vw, 44px)/1.05 var(--display); letter-spacing: -0.02em; margin: 0; text-wrap: balance; }
+  h1 span { color: var(--accent); }
+  .lede { margin: 0; max-width: 64ch; color: var(--muted); }
+  .steps { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 4px 0 0; padding: 0; list-style: none; font-size: 14px; }
+  .steps li { display: flex; gap: 8px; align-items: baseline; }
+  .steps b { font: 500 12px var(--mono); color: var(--accent); }
+  .bench { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .bench { grid-template-columns: minmax(0, 1fr); } }
+  .col { display: grid; gap: 16px; min-width: 0; }
+  .drop { border: 2px dashed var(--line); border-radius: 14px; background: var(--panel); padding: 28px 20px; text-align: center; cursor: pointer; display: grid; gap: 6px; transition: border-color .15s, background .15s; }
+  .drop:hover, .drop:focus-visible, .drop.over { border-color: var(--accent); outline: none; }
+  .drop strong { font: 600 18px var(--display); }
+  .drop small { color: var(--muted); }
+  .opts { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; font-size: 14px; }
+  .opts label { display: flex; gap: 8px; align-items: center; }
+  select, input[type="text"] { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+  .label { font: 500 12px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .clips { display: grid; gap: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .clip { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 12px 14px; border-top: 1px solid var(--line); cursor: pointer; }
+  .clip:first-child { border-top: 0; }
+  .clip.sel { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+  .clip input[type="text"] { width: 100%; font: 500 14px var(--mono); }
+  .meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 12px; font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .pill { font: 500 11px var(--mono); padding: 2px 8px; border-radius: 99px; border: 1px solid currentColor; }
+  .pill.ok { color: var(--ok); }
+  .pill.warn { color: var(--warn); }
+  .x { border: 0; background: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+  .x:hover, .x:focus-visible { color: var(--fg); background: var(--line); outline: none; }
+  .empty { padding: 18px 14px; color: var(--muted); font-size: 14px; }
+  .err { color: var(--warn); font: 13px var(--mono); }
+  .stage { position: relative; background: var(--stage); border-radius: 14px; overflow: hidden; aspect-ratio: 4 / 5; max-width: 100%; }
+  .stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  .stage .cap { position: absolute; left: 14px; top: 12px; right: 14px; display: flex; justify-content: space-between; font: 12px var(--mono); color: var(--stage-fg); font-variant-numeric: tabular-nums; pointer-events: none; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button.main { font: 600 15px var(--body); background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 10px; padding: 11px 18px; cursor: pointer; }
+  button.main:disabled { opacity: .45; cursor: default; }
+  button.main:focus-visible, button.ghost:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+  button.ghost { font: 500 14px var(--body); background: none; color: var(--fg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; cursor: pointer; }
+  .size { font: 13px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .code { display: grid; gap: 10px; }
+  pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow-x: auto; font: 13px/1.6 var(--mono); }
+  .note { font-size: 13px; color: var(--muted); max-width: 70ch; margin: 0; }
+  a { color: var(--accent); }
+  footer { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  @media (prefers-reduced-motion: reduce) { .drop { transition: none; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Mixamo clips on your player's <span>Bitmoji</span></h1>
+    <p class="lede">Snapchat's <code>get3DAvatar()</code> gives you a rigged Bitmoji with no animations. Drop Mixamo FBX files here and you get one small <code>.glb</code> that <code>bitmoji-anim.js</code> plays on it in your PlayCanvas Web Lens. Everything runs in this page; no file leaves your computer.</p>
+    <ol class="steps">
+      <li><b>1</b>Download clips from Mixamo as FBX, “Without Skin”</li>
+      <li><b>2</b>Drop them here and name them</li>
+      <li><b>3</b>Put <code>animations.glb</code> in your lens and call <code>play()</code></li>
+    </ol>
+  </header>
+
+  <div class="bench">
+    <div class="col">
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Add Mixamo FBX files">
+        <strong>Drop Mixamo .fbx files</strong>
+        <small>or click to choose · any number at once</small>
+        <input id="file" type="file" accept=".fbx" multiple hidden>
+      </div>
+      <div class="opts">
+        <label for="fps">Frame rate
+          <select id="fps"><option value="30">30 fps</option><option value="20">20 fps</option><option value="15">15 fps (smallest)</option></select>
+        </label>
+        <span class="note">Lower rates halve the file; idles and loops look the same at 15.</span>
+      </div>
+      <div>
+        <div class="label" style="margin-bottom:8px">Clips</div>
+        <div class="clips" id="clips"><div class="empty">No clips yet. The stage shows the Bitmoji rig in its T-pose until you add one.</div></div>
+      </div>
+      <div class="err" id="err" hidden></div>
+    </div>
+
+    <div class="col">
+      <div class="stage"><canvas id="stage"></canvas><div class="cap"><span id="capName">Bitmoji rig · T-pose</span><span id="capTime"></span></div></div>
+      <div class="bar">
+        <button class="main" id="save" disabled>Download animations.glb</button>
+        <span class="size" id="size"></span>
+      </div>
+    </div>
+  </div>
+
+  <section class="code">
+    <div class="label">In your lens</div>
+    <pre id="snippet"></pre>
+    <p class="note">Clips from any Mixamo character work. Clips made on Snap's own rig fit the Bitmoji's proportions best: upload Snap's <code>UploadToMixamo.fbx</code> (<a href="https://developers.snap.com/lens-studio/features/bitmoji-avatar/animating-bitmoji-3d">Animating Bitmoji 3D</a>) to Mixamo and pick your animations on it. Tick “In Place” on Mixamo for walks and runs your game moves itself.</p>
+  </section>
+
+  <footer>
+    <span>Made by <a href="https://baruchgeuze.nl/weblens">Baruch Geuze</a> for the Snapchat Web Lens community. MIT licence.</span>
+    <a href="https://github.com/bgeuze/bitmoji-mixamo">Source and bitmoji-anim.js on GitHub</a>
+  </footer>
+</div>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { convertFbx, writeGlb, JOINTS, PARENT } from "./convert.js";
+
+const $ = (id) => document.getElementById(id);
+const files = [];        // { file, buffer, clip, name, loop }
+let selected = -1;
+
+// ---- clips --------------------------------------------------------------------
+
+async function add(list) {
+  $("err").hidden = true;
+  for (const file of list) {
+    if (!/\.fbx$/i.test(file.name)) { showErr(`${file.name}: not an .fbx file`); continue; }
+    try {
+      const buffer = await file.arrayBuffer();
+      const name = file.name.replace(/\.fbx$/i, "").replace(/[^A-Za-z0-9_-]+/g, "_");
+      const clip = convertFbx(buffer, { name, fps: Number($("fps").value) });
+      files.push({ file, buffer, clip, name, loop: true });
+      selected = files.length - 1;
+    } catch (e) {
+      showErr(`${file.name}: ${e.message}`);
+    }
+  }
+  render();
+}
+
+function showErr(msg) { const el = $("err"); el.textContent = el.hidden ? msg : `${el.textContent}\n${msg}`; el.hidden = false; }
+
+function reconvert() {
+  for (const f of files) f.clip = convertFbx(f.buffer, { name: f.name, loop: f.loop, fps: Number($("fps").value) });
+  render();
+}
+
+function render() {
+  const box = $("clips");
+  box.textContent = "";
+  if (!files.length) {
+    box.innerHTML = '<div class="empty">No clips yet. The stage shows the Bitmoji rig in its T-pose until you add one.</div>';
+  }
+  files.forEach((f, i) => {
+    const r = f.clip.report;
+    const row = document.createElement("div");
+    row.className = "clip" + (i === selected ? " sel" : "");
+    row.innerHTML = `
+      <input type="text" id="name-${i}" aria-label="Clip name" value="${f.name}">
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="loop-${i}" ${f.loop ? "checked" : ""}> loop</label>
+      <button class="x" aria-label="Remove ${f.name}">×</button>
+      <div class="meta">
+        <span>${r.duration.toFixed(2)} s</span><span>${f.clip.frames} frames</span>
+        <span class="pill ${r.missing.length ? "warn" : "ok"}">${r.found}/${r.total} joints</span>
+        <span class="pill ok">${r.source === "snap-rig" ? "Snap's rig" : "Mixamo character"}</span>
+        ${r.missing.length ? `<span title="${r.missing.join(", ")}">${r.missing.length} helper joint${r.missing.length > 1 ? "s" : ""} follow their parent</span>` : ""}
+      </div>`;
+    row.addEventListener("click", (e) => { if (e.target.tagName !== "INPUT" && e.target.tagName !== "BUTTON") { selected = i; render(); } });
+    row.querySelector(`#name-${i}`).addEventListener("change", (e) => { f.name = e.target.value.trim().replace(/[^A-Za-z0-9_-]+/g, "_") || f.name; f.clip.name = f.name; render(); });
+    row.querySelector(`#loop-${i}`).addEventListener("change", (e) => { f.loop = e.target.checked; f.clip.loop = f.loop; render(); });
+    row.querySelector(".x").addEventListener("click", () => { files.splice(i, 1); selected = Math.min(selected, files.length - 1); render(); });
+    box.appendChild(row);
+  });
+  const glb = files.length ? writeGlb(files.map((f) => f.clip)) : null;
+  $("save").disabled = !glb;
+  $("size").textContent = glb ? `${(glb.byteLength / 1024).toFixed(1)} KB · ${files.length} clip${files.length > 1 ? "s" : ""}` : "";
+  $("snippet").textContent = snippet(files.map((f) => f.name));
+  $("capName").textContent = files[selected] ? files[selected].name : "Bitmoji rig · T-pose";
+  t = 0;
+}
+
+function snippet(names) {
+  const first = names[0] ?? "dance";
+  return `import { loadBitmoji } from './bitmoji-anim.js';
+
+const bitmoji = await loadBitmoji(app, {
+  clips: './animations.glb',
+  fallback: './avatar_default.glb',  // your own character on the same rig
+});
+app.root.addChild(bitmoji.entity);
+bitmoji.play('${first}');${names.length > 1 ? `\n\n// clips in this file: ${names.map((n) => `'${n}'`).join(", ")}` : ""}`;
+}
+
+$("save").addEventListener("click", () => {
+  const glb = writeGlb(files.map((f) => f.clip));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([glb], { type: "model/gltf-binary" }));
+  a.download = "animations.glb";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+$("fps").addEventListener("change", reconvert);
+const drop = $("drop");
+drop.addEventListener("click", () => $("file").click());
+drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } });
+$("file").addEventListener("change", (e) => { add([...e.target.files]); e.target.value = ""; });
+for (const ev of ["dragenter", "dragover"]) drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); });
+for (const ev of ["dragleave", "drop"]) drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); });
+drop.addEventListener("drop", (e) => add([...e.dataTransfer.files]));
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => { e.preventDefault(); add([...e.dataTransfer.files]); });
+
+// ---- stage: the rig's skeleton playing the converted clip ------------------------
+
+const canvas = $("stage");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+const stageBg = () => renderer.setClearColor(new THREE.Color(getComputedStyle(document.documentElement).getPropertyValue("--stage").trim() || "#12141a"));
+stageBg();
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", stageBg);
+const camera = new THREE.PerspectiveCamera(35, 1, 1, 2000);
+camera.position.set(90, 95, 260);
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 55, 0);
+controls.enableDamping = true;
+const grid = new THREE.GridHelper(300, 12, 0x3a4152, 0x23272f);
+scene.add(grid);
+
+const NJ = JOINTS.length;
+const CM = 56;   // hip heights to a Bitmoji-sized figure, for the stage only
+// Before any clip: a plain T-pose to stand on the stage.
+const PLAIN = JOINTS.map((n) => {
+  const side = n.startsWith("Left") ? 1 : n.startsWith("Right") ? -1 : 0;
+  const base = { Hips: [0, 1, 0], Spine: [0, 1.04, 0], C_spine0002_bind_JNT: [0, 1.12, 0], Spine1: [0, 1.2, 0], Neck: [0, 1.5, 0], C_neck0002_bind_JNT: [0, 1.56, 0], Head: [0, 1.65, 0], C_pelvis0001_bind_JNT: [0, 1, 0],
+    Shoulder: [0.08, 1.42, 0], Arm: [0.22, 1.44, 0], ForeArm: [0.52, 1.44, 0], Hand: [0.82, 1.44, 0], UpLeg: [0.12, 0.9, 0], Leg: [0.12, 0.5, 0], Foot: [0.12, 0.07, 0], ToeBase: [0.12, -0.02, 0.18] }[n.replace(/^(Left|Right)/, "")];
+  return [base[0] * (side || 1), base[1], base[2]];
+});
+const bones = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x8f9bff }));
+bones.geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array((NJ - 1) * 6), 3));
+bones.frustumCulled = false;
+scene.add(bones);
+const dots = new THREE.InstancedMesh(new THREE.SphereGeometry(1.6, 12, 8), new THREE.MeshBasicMaterial({ color: 0xe8eaf0 }), NJ);
+dots.frustumCulled = false;
+scene.add(dots);
+
+const P = JOINTS.map(() => new THREE.Vector3()), T = JOINTS.map(() => new THREE.Vector3());
+const D = JOINTS.map(() => new THREE.Quaternion());
+const qb = new THREE.Quaternion(), m = new THREE.Matrix4(), seg = new THREE.Vector3();
+let t = 0, last = performance.now();
+
+/** The clip's pose: each bone of its own T-pose turned by its parent's turn (the nearest one the source has). */
+function pose(clip, time) {
+  let f0 = 0, f1 = 0, u = 0;
+  if (clip) {
+    const x = Math.min(clip.frames - 1, time * clip.fps);
+    f0 = Math.floor(x); f1 = Math.min(clip.frames - 1, f0 + 1); u = x - f0;
+  }
+  const rest = clip ? clip.rest : PLAIN;
+  for (let j = 0; j < NJ; j++) {
+    const p = PARENT[j];
+    T[j].fromArray(rest[j] ?? (p < 0 ? [0, 1, 0] : T[p].toArray().map((v) => v / CM))).multiplyScalar(CM);
+    if (clip && rest[j]) {
+      const r = clip.rot, a = (f0 * NJ + j) * 4, b = (f1 * NJ + j) * 4;
+      D[j].set(r[a], r[a + 1], r[a + 2], r[a + 3]).slerp(qb.set(r[b], r[b + 1], r[b + 2], r[b + 3]), u);
+    } else D[j].copy(p < 0 ? new THREE.Quaternion() : D[p]);
+    if (p < 0) {
+      if (clip) {
+        const h = clip.hips;
+        P[j].set(h[f0 * 3] + (h[f1 * 3] - h[f0 * 3]) * u, h[f0 * 3 + 1] + (h[f1 * 3 + 1] - h[f0 * 3 + 1]) * u, h[f0 * 3 + 2] + (h[f1 * 3 + 2] - h[f0 * 3 + 2]) * u).multiplyScalar(CM);
+      } else P[j].copy(T[0]);
+    } else {
+      P[j].copy(seg.subVectors(T[j], T[p]).applyQuaternion(D[p])).add(P[p]);
+    }
+  }
+  const pos = bones.geometry.attributes.position.array;
+  let k = 0;
+  for (let j = 1; j < NJ; j++) { const p = PARENT[j]; pos.set([P[p].x, P[p].y, P[p].z, P[j].x, P[j].y, P[j].z], k); k += 6; }
+  bones.geometry.attributes.position.needsUpdate = true;
+  for (let j = 0; j < NJ; j++) dots.setMatrixAt(j, m.makeTranslation(P[j].x, P[j].y, P[j].z));
+  dots.instanceMatrix.needsUpdate = true;
+}
+
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  const f = files[selected];
+  if (f) {
+    const len = (f.clip.frames - 1) / f.clip.fps;
+    t += dt;
+    if (t > len + (f.loop ? 0 : 0.6)) t = 0;
+    pose(f.clip, Math.min(t, len));
+    $("capTime").textContent = `${Math.min(t, len).toFixed(2)} / ${len.toFixed(2)} s`;
+  } else {
+    pose(null, 0);
+    $("capTime").textContent = "";
+  }
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * renderer.getPixelRatio()) || canvas.height !== Math.round(h * renderer.getPixelRatio())) {
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  // Follow the hips across the floor, so a clip that travels stays in view.
+  const dx = (P[0].x - controls.target.x) * Math.min(1, dt * 4), dz = (P[0].z - controls.target.z) * Math.min(1, dt * 4);
+  controls.target.x += dx; controls.target.z += dz; camera.position.x += dx; camera.position.z += dz;
+  grid.position.set(Math.round(controls.target.x / 25) * 25, 0, Math.round(controls.target.z / 25) * 25);
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+render();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

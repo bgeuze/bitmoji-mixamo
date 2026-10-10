@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Bitmoji Mixamo Demo</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #d9dcf2; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+    canvas { display: block; width: 100%; height: 100%; }
+    /* Clear of Snapchat's own chrome: its close X top left, its icon band along the bottom (~15%). */
+    #status { position: fixed; left: 64px; right: 16px; top: calc(env(safe-area-inset-top, 0px) + 18px); text-align: right; font: 600 13px/1.3 system-ui, sans-serif; color: #1b1e3a; opacity: .75; pointer-events: none; }
+    #status b { display: block; font-size: 20px; opacity: 1; }
+    #clips { position: fixed; left: 12px; right: 12px; bottom: 16vh; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-height: 26vh; overflow-y: auto; }
+    #clips button { font: 600 14px system-ui, sans-serif; color: #1b1e3a; background: rgba(255,255,255,.78); border: 0; border-radius: 99px; padding: 8px 12px; touch-action: manipulation; }
+    #clips button.once { background: rgba(255,255,255,.55); }
+    #clips button.on { background: #3d4cf5; color: #fff; }
+    #clips button small { font-weight: 500; opacity: .6; margin-left: 3px; }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="status"></div>
+  <div id="clips"></div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
