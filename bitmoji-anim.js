@@ -56,7 +56,12 @@ function loadContainer(app, name, url, ms) {
     app.assets.add(asset);
     app.assets.load(asset);
   });
-  return withTimeout(done, ms, name).catch((e) => { app.assets.remove(asset); throw e; });
+  return withTimeout(done, ms, name).catch((e) => {
+    // A load cannot be cancelled: free it if it lands after all.
+    asset.once("load", () => asset.unload());
+    app.assets.remove(asset);
+    throw e;
+  });
 }
 
 /** The player's 3D Bitmoji URL, or null when Snap's docs say to use your default. */
@@ -93,7 +98,7 @@ export function parseClips(buffer) {
   const jsonLen = dv.getUint32(12, true);
   const json = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 20, jsonLen)));
   if (json.extras?.format !== "bitmoji-mixamo") throw new Error("clips: not made by the bitmoji-mixamo converter");
-  if (!(json.extras.version >= 2)) throw new Error("clips: made by an older converter; convert the FBX again");
+  if (!(json.extras.version >= 3)) throw new Error("clips: made by an older converter; convert the FBX again");
   const bin = new Uint8Array(buffer, 20 + jsonLen + 8, dv.getUint32(20 + jsonLen, true));
   const joints = json.nodes.map((n) => n.name), parent = json.extras.parent, NJ = joints.length;
   const clips = json.animations.map((anim) => {
@@ -328,6 +333,9 @@ class Retarget {
       this.T.push(new Quat());
     }
 
+    // The avatar's joints this source does not drive: held at their rest under their driven parent.
+    this.held = joints.map((n, j) => (n && !rig.has[j] ? [n, n.getLocalRotation().clone()] : null)).filter(Boolean);
+
     // The hips: the clip places them in hip heights in character space (Y up, the origin on
     // the floor between the feet); here that is turned to the avatar's front and scaled by the
     // avatar's own hip height above its origin, then put in its hips' parent frame. Hip height,
@@ -340,6 +348,7 @@ class Retarget {
 
   /** turns: each joint's turn from the T-pose in character space; hips: where the Hips are, in hip heights. */
   apply(turns, hips) {
+    for (const [n, q] of this.held) n.setLocalRotation(q);
     for (let e = 0; e < this.nodes.length; e++) {
       this.T[e].mul2(this.A, turns[this.jointOf[e]]).mul(this.Ainv).mul(this.Q[e]);
       const a = this.anc[e];
@@ -357,15 +366,16 @@ class Retarget {
 function sample(clip, t, local, hips) {
   const x = Math.max(0, Math.min(clip.frames - 1, t * clip.fps));
   const f0 = Math.floor(x), f1 = Math.min(clip.frames - 1, f0 + 1), u = x - f0;
-  const r = clip.rot, NJ = local.length;
+  const r = clip.rot, NJ = local.length, P = clip.rig.parent;
   for (let j = 0; j < NJ; j++) {
-    if (!clip.rig.has[j]) { local[j].set(0, 0, 0, 1); continue; }
+    // A joint the source lacks turns with its parent (it is not driven, but a crossfade reads it).
+    if (!clip.rig.has[j]) { if (P[j] < 0) local[j].set(0, 0, 0, 1); else local[j].copy(local[P[j]]); continue; }
     const a = (f0 * NJ + j) * 4, b = (f1 * NJ + j) * 4;
     const s = r[a] * r[b] + r[a + 1] * r[b + 1] + r[a + 2] * r[b + 2] + r[a + 3] * r[b + 3] < 0 ? -1 : 1;
     local[j].set(r[a] + (s * r[b] - r[a]) * u, r[a + 1] + (s * r[b + 1] - r[a + 1]) * u, r[a + 2] + (s * r[b + 2] - r[a + 2]) * u, r[a + 3] + (s * r[b + 3] - r[a + 3]) * u).normalize();
   }
-  const h = clip.hips, at = (i) => h[f0 * 3 + i] + (h[f1 * 3 + i] - h[f0 * 3 + i]) * u;
-  hips.set(at(0), at(1), at(2));
+  const h = clip.hips, a = f0 * 3, b = f1 * 3;
+  hips.set(h[a] + (h[b] - h[a]) * u, h[a + 1] + (h[b + 1] - h[a + 1]) * u, h[a + 2] + (h[b + 2] - h[a + 2]) * u);
 }
 
 /** The loaded avatar. `entity` goes in your scene; `play()` runs a clip. */
@@ -375,12 +385,17 @@ export class Bitmoji {
     this.entity = entity;
     /** The GLB's own root, left untouched: setting its transform lays the figure on its side. */
     this.model = model;
-    /** True when this is the player's own Bitmoji, false for your fallback. */
+    /** True for the player's own Bitmoji (or the url you passed), false for your fallback. */
     this.isReal = isReal;
     this.app = app;
     this._assets = assets;
-    this._clips = new Map(lib.clips.map((c) => [c.name, c]));
-    this._cur = this._prev = null;
+    this._clips = new Map();
+    for (const c of lib.clips) {
+      if (this._clips.has(c.name)) console.warn(`bitmoji: two clips named "${c.name}"; the last one plays`);
+      this._clips.set(c.name, c);
+    }
+    this._cur = this._fade = null;
+    this._hasLast = false;
 
     const all = [];
     const walk = (n) => { all.push(n); n.children.forEach(walk); };
@@ -414,9 +429,9 @@ export class Bitmoji {
         // One retarget per clip source, measured now, while the avatar stands in its rest pose.
         for (const c of lib.clips) if (!this._retargets.has(c.rig.key)) this._retargets.set(c.rig.key, new Retarget(entity, joints, c.rig));
         this._local = ref.joints.map(() => new Quat());
-        this._local2 = ref.joints.map(() => new Quat());
+        this._last = ref.joints.map(() => new Quat());
         this._hips = new Vec3();
-        this._hips2 = new Vec3();
+        this._lastHips = new Vec3();
         this.mode = mode;
       }
     }
@@ -440,57 +455,69 @@ export class Bitmoji {
   /** The clip playing now, or null. */
   get current() { return this._cur?.clip.name ?? null; }
 
+  /** Whether a clip loops unless told otherwise (the converter's loop setting). */
+  isLoop(name) { return this._clips.get(name)?.loop ?? false; }
+
+  /** A clip's length in seconds (0 for a name it does not have). */
+  length(name) { return this._clips.get(name)?.length ?? 0; }
+
   /**
-   * Plays a clip, crossfading from whatever played before. Resolves when a one-shot ends or
-   * anything else is played over it; a loop resolves only when interrupted.
+   * Plays a clip, crossfading from the pose on screen. Resolves true when a one-shot plays to
+   * its end, false when anything stops it first (another play(), stop(), destroy()); a loop
+   * only resolves when it is stopped.
    * @param {string} name
    * @param {{fade?: number, loop?: boolean, speed?: number, from?: number}} [o]
+   * @returns {Promise<boolean>}
    */
   play(name, o = {}) {
     const clip = this._clips.get(name);
-    if (!clip) { console.warn(`bitmoji: no clip "${name}" (have: ${this.clips.join(", ")})`); return Promise.resolve(); }
-    this._cur?.resolve();
+    if (!clip) { console.warn(`bitmoji: no clip "${name}" (have: ${this.clips.join(", ")})`); return Promise.resolve(false); }
+    this._cur?.resolve(false);
     const fade = o.fade ?? 0.2;
-    this._prev = this._cur && fade > 0 ? { layer: this._cur, fade, t: 0 } : null;
+    // Fade from what is on screen now, a fade in progress included, so nothing pops.
+    this._fade = fade > 0 && this._hasLast ? { from: this._last.map((q) => q.clone()), hips: this._lastHips.clone(), t: 0, dur: fade } : null;
+    const speed = o.speed ?? 1;
     return new Promise((resolve) => {
-      this._cur = { clip, t: o.from ?? 0, speed: o.speed ?? 1, loop: o.loop ?? clip.loop, resolve };
+      this._cur = { clip, t: o.from ?? (speed < 0 ? clip.length : 0), speed, loop: o.loop ?? clip.loop, resolve };
     });
   }
 
-  /** Holds the current pose. */
-  stop() { this._cur?.resolve(); this._cur = this._prev = null; }
+  /** Holds the current pose (the next play() fades from it). */
+  stop() { this._cur?.resolve(false); this._cur = null; }
 
   /** Advances the animation. Called for you on app "update" unless you passed autoUpdate: false. */
   update(dt) {
     const cur = this._cur;
     if (!cur) return;
     cur.t += dt * cur.speed;
-    if (!cur.loop && cur.t >= cur.clip.length) cur.resolve();
+    const len = cur.clip.length;
+    if (!cur.loop && (cur.speed >= 0 ? cur.t >= len : cur.t <= 0)) cur.resolve(true);
     if (this.mode === "none") return;
     sample(cur.clip, this._time(cur), this._local, this._hips);
-    const own = cur.clip.rig.has;
-    const prev = this._prev;
-    if (prev) {
-      prev.layer.t += dt * prev.layer.speed;
-      prev.t += dt;
-      const w = Math.min(1, prev.t / prev.fade), k = w * w * (3 - 2 * w);
-      if (w >= 1) this._prev = null;
+    const f = this._fade;
+    if (f) {
+      f.t += dt;
+      const w = Math.min(1, f.t / f.dur), k = w * w * (3 - 2 * w);
+      if (w >= 1) this._fade = null;
       else {
-        sample(prev.layer.clip, this._time(prev.layer), this._local2, this._hips2);
         for (let j = 0; j < this._local.length; j++) {
-          if (!own[j]) continue;
-          const a = this._local2[j], b = this._local[j];
+          const a = f.from[j], b = this._local[j];
           if (a.dot(b) < 0) b.set(-b.x, -b.y, -b.z, -b.w);
           b.set(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, a.z + (b.z - a.z) * k, a.w + (b.w - a.w) * k).normalize();
         }
-        this._hips.lerp(this._hips2, this._hips, k);
+        this._hips.lerp(f.hips, this._hips, k);
       }
     }
     this._retargets.get(cur.clip.rig.key).apply(this._local, this._hips);
+    for (let j = 0; j < this._local.length; j++) this._last[j].copy(this._local[j]);
+    this._lastHips.copy(this._hips);
+    this._hasLast = true;
   }
 
   /** Frees the avatar and its GLB. */
   destroy() {
+    this.stop();
+    this.mode = "none";
     if (this._tick) this.app.off("update", this._tick);
     this.entity.destroy();
     for (const a of this._assets) { a.unload(); this.app.assets.remove(a); }
@@ -503,7 +530,7 @@ export class Bitmoji {
 
   _time(layer) {
     const len = layer.clip.length;
-    return layer.loop && len > 0 ? ((layer.t % len) + len) % len : Math.min(layer.t, len);
+    return layer.loop && len > 0 ? ((layer.t % len) + len) % len : Math.max(0, Math.min(layer.t, len));
   }
 }
 
@@ -523,27 +550,43 @@ export class Bitmoji {
  */
 export async function loadBitmoji(app, opts = {}) {
   ensureHandlers(app);
-  const sources = [].concat(opts.clips ?? []);
-  const libP = Promise.all(sources.map(async (s) => parseClips(typeof s === "string" ? await (await fetch(s)).arrayBuffer() : s))).then((libs) => ({
+  // The clips load alongside the avatar. A clips file that cannot be read is the lens's own bug:
+  // it is said as such, not hidden behind the fallback.
+  const read = async (s) => {
+    if (typeof s !== "string") return parseClips(s);
+    const r = await fetch(s);
+    if (!r.ok) throw new ClipsError(`clips: ${s} answered ${r.status}`);
+    try { return parseClips(await r.arrayBuffer()); } catch (e) { throw new ClipsError(`${e.message} (${s})`); }
+  };
+  const libP = Promise.all([].concat(opts.clips ?? []).map(read)).then((libs) => ({
     joints: libs[0]?.joints ?? [],
     clips: libs.flatMap((l) => l.clips),
   }));
+  libP.catch(() => {}); // awaited below; no unhandled-rejection noise meanwhile
 
   const build = async (url, name, real) => {
     const asset = await loadContainer(app, name, url, opts.timeout ?? LOAD_TIMEOUT);
-    const model = asset.resource.instantiateRenderEntity();
-    for (const r of model.findComponents("render")) {
-      // Skinned bounds land metres off under the GLB's scaled root: the mesh would vanish.
-      for (const mi of r.meshInstances) mi.cull = false;
-      // The mouth (teeth, tongue) sits below the chin until a face rig drives it.
-      if ((opts.hideMouth ?? true) && /mouth/i.test(r.entity.name)) r.enabled = false;
+    let model = null;
+    try {
+      model = asset.resource.instantiateRenderEntity();
+      for (const r of model.findComponents("render")) {
+        // Skinned bounds land metres off under the GLB's scaled root: the mesh would vanish.
+        for (const mi of r.meshInstances) mi.cull = false;
+        // The mouth (teeth, tongue) sits below the chin until a face rig drives it.
+        if ((opts.hideMouth ?? true) && /mouth/i.test(r.entity.name)) r.enabled = false;
+      }
+      const entity = new Entity("bitmoji");
+      entity.addChild(model);
+      const lib = await libP;
+      const b = new Bitmoji(app, entity, model, lib, real, [asset], opts);
+      if (lib.clips.length && b.mode === "none") { b.destroy(); model = null; throw new Error(`${name}: ${b.found} of the rig's joints found, too few to animate`); }
+      return b;
+    } catch (e) {
+      model?.destroy();
+      if (asset.resource || asset.loaded) asset.unload();
+      app.assets.remove(asset);
+      throw e;
     }
-    const entity = new Entity("bitmoji");
-    entity.addChild(model);
-    const lib = await libP;
-    const b = new Bitmoji(app, entity, model, lib, real, [asset], opts);
-    if (lib.clips.length && b.mode === "none") { b.destroy(); throw new Error(`${name}: ${b.found} of the rig's joints found, too few to animate`); }
-    return b;
   };
 
   let url = opts.url;
@@ -551,10 +594,17 @@ export async function loadBitmoji(app, opts = {}) {
     url = await withTimeout(bitmojiUrl(opts.snapchat ?? globalThis.snapchat), URL_TIMEOUT, "get3DAvatar").catch((e) => { console.warn("bitmoji: using the fallback:", e.message); return null; });
   }
   if (url) {
-    try { return await build(url, "bitmoji", true); } catch (e) { console.warn("bitmoji: using the fallback:", e.message); }
+    try { return await build(url, "bitmoji", true); } catch (e) {
+      if (e instanceof ClipsError) throw e;
+      console.warn("bitmoji: using the fallback:", e.message);
+    }
   }
-  if (!opts.fallback) throw new Error("bitmoji: no Bitmoji and no fallback");
+  if (!opts.fallback) { await libP; throw new Error("bitmoji: no Bitmoji and no fallback"); }
   return build(opts.fallback, "bitmoji-fallback", false).catch((e) => {
+    if (e instanceof ClipsError) throw e;
     throw new Error(`bitmoji: no Bitmoji, and the fallback ${opts.fallback} did not load (${e.message})`);
   });
 }
+
+/** A clips file that could not be read: thrown as is, never answered with the fallback. */
+class ClipsError extends Error {}

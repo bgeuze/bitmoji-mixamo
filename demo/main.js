@@ -41,7 +41,9 @@ async function clipFiles() {
   const files = ["./samples.glb"];
   try {
     const r = await fetch("./animations.glb");
-    if (r.ok) files.push(await r.arrayBuffer());
+    const buf = r.ok ? await r.arrayBuffer() : null;
+    // A dev server answers a missing file with index.html: only a real .glb counts.
+    if (buf && buf.byteLength > 12 && new DataView(buf).getUint32(0, true) === 0x46546c67) files.push(buf);
   } catch { /* none */ }
   return files;
 }
@@ -77,14 +79,12 @@ async function main() {
     };
     const play = async (name) => {
       show(name);
-      const loops = bitmoji._clips.get(name).loop;
-      await bitmoji.play(name, { fade: 0.25 });
-      // A one-shot that ran to its end (not one cut off by a tap) goes back to the rest loop.
-      if (!loops && bitmoji.current === name) { bitmoji.play(rest, { fade: 0.4 }); show(rest); }
+      // A one-shot that plays to its end (true; a tap that cuts it off gives false) goes back to the rest loop.
+      if (await bitmoji.play(name, { fade: 0.25 })) { bitmoji.play(rest, { fade: 0.4 }); show(rest); }
     };
     for (const name of bitmoji.clips) {
       const b = document.createElement("button");
-      const loops = bitmoji._clips.get(name).loop;
+      const loops = bitmoji.isLoop(name);
       b.className = loops ? "" : "once";
       b.innerHTML = name.replace(/_/g, " ") + (loops ? "" : "<small>1×</small>");
       b.addEventListener("pointerdown", (e) => { e.preventDefault(); play(name); });

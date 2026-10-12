@@ -15,17 +15,22 @@
  * Mixamo hands every character back in the same T-pose, so a clip made on Snap's
  * UploadToMixamo.fbx and one made on Y Bot are read the same way.
  */
-import { AnimationMixer, Quaternion, Vector3 } from "three";
+import { AnimationMixer, LoopOnce, Quaternion, Vector3 } from "three";
 import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 
 export const FORMAT = "bitmoji-mixamo";
-export const VERSION = 2;
+export const VERSION = 3;
 
 /** The joints a clip drives, and their parents: Mixamo's skeleton with Snap's helpers in between. */
 export const JOINTS = ["Hips", "Spine", "C_spine0002_bind_JNT", "Spine1", "Neck", "C_neck0002_bind_JNT", "Head",
   "LeftShoulder", "LeftArm", "LeftForeArm", "LeftHand", "RightShoulder", "RightArm", "RightForeArm", "RightHand",
   "C_pelvis0001_bind_JNT", "LeftUpLeg", "LeftLeg", "LeftFoot", "LeftToeBase", "RightUpLeg", "RightLeg", "RightFoot", "RightToeBase"];
 export const PARENT = [-1, 0, 1, 2, 3, 4, 5, 3, 7, 8, 9, 3, 11, 12, 13, 0, 15, 16, 17, 18, 15, 20, 21, 22];
+
+/** A clip name as the converter writes it: letters, digits, "_" and "-". */
+export function safeName(name) {
+  return String(name).replace(/\.fbx$/i, "").replace(/[^A-Za-z0-9_-]+/g, "_") || "clip";
+}
 
 /** A joint name without a rig's dressing: "mixamorig:LeftArm", "mixamorig1_LeftArm" -> "leftarm". */
 function bare(name) {
@@ -73,12 +78,17 @@ function worldQuat(o, out) {
 function parseFbx(buffer) {
   // In Node, an FBX "With Skin" asks three.js for its textures through the DOM: give it an image
   // that never loads (only the skeleton and the animation are read).
-  if (typeof document === "undefined") {
+  const stub = typeof document === "undefined";
+  if (stub) {
     const img = { addEventListener() {}, removeEventListener() {}, setAttribute() {}, style: {} };
     globalThis.document = { createElementNS: () => img, createElement: () => img };
   }
-  const ab = buffer instanceof ArrayBuffer ? buffer : buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-  return new FBXLoader().parse(ab, "");
+  try {
+    const ab = buffer instanceof ArrayBuffer ? buffer : buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    return new FBXLoader().parse(ab, "");
+  } finally {
+    if (stub) delete globalThis.document;
+  }
 }
 
 /**
@@ -108,15 +118,21 @@ export function convertFbx(buffer, opts = {}) {
   const rest = src.map((b) => (b ? b.getWorldPosition(new Vector3()).toArray().map((x) => Math.round((x / hipHeight) * 1e4) / 1e4) : null));
 
   const fps = opts.fps ?? 30;
+  if (!(fps > 0 && fps <= 120)) throw new Error(`fps must be between 1 and 120, not ${opts.fps}`);
   const loop = opts.loop ?? true;
   const frames = Math.max(2, Math.round(anim.duration * fps) + 1);
   const rot = new Float32Array(frames * NJ * 4);
   const hips = new Float32Array(frames * 3);
   const mixer = new AnimationMixer(scene);
-  mixer.clipAction(anim).play();
+  // Once and clamped: a repeating action wraps setTime(duration) back to the first frame, which
+  // would end every one-shot on its start pose.
+  const action = mixer.clipAction(anim);
+  action.setLoop(LoopOnce, 1);
+  action.clampWhenFinished = true;
+  action.play();
   const q = new Quaternion(), p = new Vector3();
   for (let f = 0; f < frames; f++) {
-    mixer.setTime(Math.min(anim.duration, f / fps));
+    mixer.setTime(Math.min(anim.duration - 1e-4, f / fps));
     scene.updateMatrixWorld(true);
     for (let j = 0; j < NJ; j++) {
       if (!src[j]) continue;
@@ -132,7 +148,7 @@ export function convertFbx(buffer, opts = {}) {
   mixer.stopAllAction();
 
   return {
-    name: (opts.name ?? anim.name ?? "clip").replace(/\.fbx$/i, ""),
+    name: safeName(opts.name ?? (anim.name && anim.name !== "mixamo.com" ? anim.name : "clip")),
     fps,
     loop,
     frames,
@@ -159,6 +175,9 @@ export function convertFbx(buffer, opts = {}) {
  */
 export function writeGlb(clips) {
   const NJ = JOINTS.length;
+  // Every clip under its own name: a second "idle" becomes "idle_2".
+  const used = new Map();
+  const names = clips.map((c) => { const n = used.get(c.name) ?? 0; used.set(c.name, n + 1); return n ? `${c.name}_${n + 1}` : c.name; });
   const chunks = [];
   let byteLength = 0;
   const bufferViews = [], accessors = [];
@@ -173,7 +192,7 @@ export function writeGlb(clips) {
     return accessors.length - 1;
   };
 
-  const animations = clips.map((c) => {
+  const animations = clips.map((c, ci) => {
     const times = new Float32Array(c.frames);
     for (let f = 0; f < c.frames; f++) times[f] = f / c.fps;
     const input = push(times, { componentType: 5126, count: c.frames, type: "SCALAR", min: [0], max: [times[c.frames - 1]] });
@@ -189,7 +208,7 @@ export function writeGlb(clips) {
     }
     samplers.push({ input, output: push(c.hips, { componentType: 5126, count: c.frames, type: "VEC3" }), interpolation: "LINEAR" });
     channels.push({ sampler: samplers.length - 1, target: { node: 0, path: "translation" } });
-    return { name: c.name, samplers, channels, extras: { loop: c.loop, fps: c.fps, rest: c.rest } };
+    return { name: names[ci], samplers, channels, extras: { loop: c.loop, fps: c.fps, rest: c.rest } };
   });
 
   const nodes = JOINTS.map((name, j) => {

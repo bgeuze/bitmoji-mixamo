@@ -18,13 +18,13 @@ export interface LoadBitmojiOptions {
 }
 
 export interface PlayOptions {
-  /** Crossfade from the current pose, seconds. Default 0.2. */
+  /** Crossfade from the pose on screen, seconds. Default 0.2. */
   fade?: number;
   /** Override the clip's own loop flag. */
   loop?: boolean;
-  /** Playback rate. Default 1. */
+  /** Playback rate; negative plays backwards from the end. Default 1. */
   speed?: number;
-  /** Start this far into the clip, seconds. */
+  /** Start this far into the clip, seconds (default 0, or the end when speed < 0). */
   from?: number;
 }
 
@@ -33,9 +33,9 @@ export declare class Bitmoji {
   readonly entity: Entity;
   /** The GLB's own root, left untouched. */
   readonly model: Entity;
-  /** True for the player's own Bitmoji, false for your fallback. */
+  /** True for the player's own Bitmoji (or the url you passed), false for your fallback. */
   readonly isReal: boolean;
-  /** How the rig's joints were found in this avatar: by "name", by "shape", or "none". */
+  /** How the rig's joints were found in this avatar: by "name", by "shape", or "none" (no clips given). */
   readonly mode: "name" | "shape" | "none";
   /** How many of the rig's 24 joints the avatar has (worth logging on a phone). */
   readonly found: number;
@@ -43,15 +43,23 @@ export declare class Bitmoji {
   readonly clips: string[];
   /** The clip playing now, or null. */
   readonly current: string | null;
-  /** Resolves when a one-shot ends or another clip replaces it. */
-  play(name: string, opts?: PlayOptions): Promise<void>;
-  /** Holds the current pose. */
+  /** Whether a clip loops unless play() says otherwise. */
+  isLoop(name: string): boolean;
+  /** A clip's length in seconds (0 for a name it does not have). */
+  length(name: string): number;
+  /**
+   * Plays a clip, crossfading from the pose on screen. Resolves true when a one-shot plays to
+   * its end, false when something stops it first (another play(), stop(), destroy()). A loop
+   * resolves only when stopped. An unknown name warns and resolves false.
+   */
+  play(name: string, opts?: PlayOptions): Promise<boolean>;
+  /** Holds the current pose; the next play() fades from it. */
   stop(): void;
   /** Advances the animation (only needed with autoUpdate: false). */
   update(dt: number): void;
   /** A joint by the rig's name ("Head", "RightHand"), to attach things to. */
   joint(name: string): GraphNode | null;
-  /** Frees the avatar and its GLB. */
+  /** Frees the avatar and its GLB, and stops any clip (its promise resolves false). Safe to call twice. */
   destroy(): void;
 }
 
@@ -63,8 +71,19 @@ export interface ParsedClip {
   frames: number;
 }
 
-/** Loads the player's Bitmoji, or your fallback, with your clips. Rejects only when neither loads. */
+export interface ParsedClips {
+  /** The joint names, in the file's order. */
+  joints: string[];
+  /** Each joint's parent index (-1 for the Hips). */
+  parent: number[];
+  clips: ParsedClip[];
+}
+
+/**
+ * Loads the player's Bitmoji, or your fallback, with your clips. Rejects when neither avatar
+ * loads, or when a clips file cannot be read (that error is never answered with the fallback).
+ */
 export declare function loadBitmoji(app: AppBase, opts?: LoadBitmojiOptions): Promise<Bitmoji>;
 
 /** Parses the converter's .glb. */
-export declare function parseClips(buffer: ArrayBuffer): { rig: unknown; clips: ParsedClip[] };
+export declare function parseClips(buffer: ArrayBuffer): ParsedClips;
